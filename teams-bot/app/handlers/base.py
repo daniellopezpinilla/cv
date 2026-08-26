@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+
+from app.models import IncomingMessage
 
 
 @dataclass(frozen=True)
@@ -17,9 +18,9 @@ class MessageHandler(ABC):
     name: str = "base"
 
     @abstractmethod
-    def can_handle(self, activity: dict[str, Any]) -> bool:
+    def can_handle(self, message: IncomingMessage) -> bool:
         raise NotImplementedError
 
     @abstractmethod
-    async def handle(self, activity: dict[str, Any]) -> HandlerResult:
+    async def handle(self, message: IncomingMessage) -> HandlerResult:
         raise NotImplementedError

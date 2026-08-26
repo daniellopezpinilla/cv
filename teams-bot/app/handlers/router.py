@@ -3,10 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.handlers.base import HandlerResult, MessageHandler
-
-
-# Re-export for convenience
-__all__ = ["HandlerResult", "MessageHandler", "HandlerRouter"]
+from app.models import IncomingMessage
 
 
 class HandlerRouter:
@@ -15,8 +12,8 @@ class HandlerRouter:
     def __init__(self, handlers: list[MessageHandler]) -> None:
         self._handlers = handlers
 
-    async def dispatch(self, activity: dict[str, Any]) -> HandlerResult:
+    async def dispatch(self, message: IncomingMessage) -> HandlerResult:
         for handler in self._handlers:
-            if handler.can_handle(activity):
-                return await handler.handle(activity)
+            if handler.can_handle(message):  # type: ignore[arg-type]
+                return await handler.handle(message)  # type: ignore[arg-type]
         return HandlerResult(handled=False, detail="ningún handler aplicó")
