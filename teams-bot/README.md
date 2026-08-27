@@ -27,13 +27,18 @@ Prueba en horario laboral: `FORCE_OFF_HOURS=true` en `.env` (quítalo después).
 
 ## Permisos Graph (Aplicación + admin consent)
 
-Mínimo para DMs:
+**Leer DMs:**
 - `Chat.Read.All`
-- `Chat.ReadWrite.All`
+- `User.Read.All` (recomendado)
 
-Recomendado:
-- `User.Read.All` (resolver el usuario de soporte y no auto-responderse)
-- `ChannelMessage.Read.All` / `ChannelMessage.Send` (si más adelante usan canal)
+**Enviar respuestas (obligatorio — Graph lo exige explícitamente):**
+- `ChatMessage.Send.All`
+
+> `Chat.ReadWrite.All` **no basta** para enviar; Microsoft Graph responde 403 pidiendo `ChatMessage.Send.All`.
+
+Opcional (canal): `ChannelMessage.Read.All`, `ChannelMessage.Send`
+
+También puede requerir **CsApplicationAccessPolicy** en Teams (admin Teams).
 
 ## Setup
 
