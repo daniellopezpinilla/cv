@@ -229,11 +229,6 @@ class GraphTeamsClient:
 
         chat_seg = quote(target_chat, safe="")
         urls = [f"https://graph.microsoft.com/v1.0/chats/{chat_seg}/messages"]
-        if self._support_user_id:
-            user_seg = quote(self._support_user_id, safe="@")
-            urls.append(
-                f"https://graph.microsoft.com/v1.0/users/{user_seg}/chats/{chat_seg}/messages"
-            )
 
         last_error = ""
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -267,8 +262,9 @@ class GraphTeamsClient:
                 )
                 if response.status_code == 403:
                     logger.error(
-                        "403 al enviar: confirma Chat.ReadWrite.All (Aplicación + admin consent) "
-                        "y política Teams CsApplicationAccessPolicy para la App ID."
+                        "403 al enviar: Graph requiere permiso de Aplicación "
+                        "ChatMessage.Send.All (Chat.ReadWrite.All no alcanza). "
+                        "También puede hacer falta CsApplicationAccessPolicy en Teams."
                     )
 
         raise RuntimeError(
