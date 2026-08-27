@@ -5,7 +5,7 @@ from app.state import (
     is_newer_than_state,
     parse_graph_datetime,
 )
-from app.teams.parse import graph_message_to_incoming, strip_html
+from app.teams.parse import graph_message_to_incoming, is_user_chat_message, strip_html
 
 
 def test_strip_html() -> None:
@@ -67,6 +67,11 @@ def test_ensure_watching_since_sets_once() -> None:
     assert updated.watching_since
     again = ensure_watching_since(updated)
     assert again.watching_since == updated.watching_since
+
+
+def test_is_user_chat_message() -> None:
+    assert is_user_chat_message({"messageType": "message"})
+    assert not is_user_chat_message({"messageType": "systemEventMessage"})
 
 
 def test_is_after_watching_since() -> None:

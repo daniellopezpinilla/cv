@@ -15,11 +15,10 @@ from app.state import (
     is_newer_than_cursor,
     load_state,
     mark_bootstrapped_now,
-    parse_graph_datetime,
     save_state,
 )
 from app.teams.graph import GraphTeamsClient
-from app.teams.parse import graph_message_to_incoming
+from app.teams.parse import graph_message_to_incoming, is_user_chat_message
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("teams-bot.poller")
@@ -52,16 +51,20 @@ def _sort_oldest_first(raw_messages: list[dict[str, Any]]) -> list[dict[str, Any
     )
 
 
-def _chat_is_stale(chat: dict[str, Any], watching_since: str) -> bool:
-    """True si el chat no tuvo actividad desde que arrancó el bot."""
-    updated = chat.get("lastUpdatedDateTime")
-    if not updated or not watching_since:
-        return False
-    updated_dt = parse_graph_datetime(updated)
-    since_dt = parse_graph_datetime(watching_since)
-    if updated_dt and since_dt:
-        return updated_dt < since_dt
-    return False
+def _merge_tracked_chats(
+    api_chats: list[dict[str, Any]],
+    state: PollState,
+) -> list[dict[str, Any]]:
+    """Une chats recientes de Graph con chats ya vigilados en estado."""
+    by_id: dict[str, dict[str, Any]] = {}
+    for chat in api_chats:
+        cid = str(chat.get("id") or "")
+        if cid:
+            by_id[cid] = chat
+    for chat_id in state.chats:
+        if chat_id not in by_id:
+            by_id[chat_id] = {"id": chat_id, "chatType": "oneOnOne"}
+    return list(by_id.values())
 
 
 async def _process_chat_messages(
@@ -94,6 +97,9 @@ async def _process_chat_messages(
         if not msg_id:
             continue
 
+        if not is_user_chat_message(raw):
+            continue
+
         if watching_since and not is_after_watching_since(created, watching_since):
             continue
 
@@ -115,17 +121,24 @@ async def _process_chat_messages(
                 msg_id,
             )
         else:
-            result = await router.dispatch(incoming)
-            logger.info(
-                "Chat %s | mensaje %s de %s → handled=%s (%s)",
-                chat_id[:24],
-                msg_id,
-                incoming.from_name or incoming.from_id,
-                result.handled,
-                result.detail,
-            )
-            if result.handled:
-                replied += 1
+            try:
+                result = await router.dispatch(incoming)
+                logger.info(
+                    "Chat %s | mensaje %s de %s → handled=%s (%s)",
+                    chat_id[:24],
+                    msg_id,
+                    incoming.from_name or incoming.from_id,
+                    result.handled,
+                    result.detail,
+                )
+                if result.handled:
+                    replied += 1
+            except Exception:
+                logger.exception(
+                    "Error respondiendo en chat %s al mensaje %s",
+                    chat_id[:24],
+                    msg_id,
+                )
 
         cursor = ChatCursor(
             last_message_id=msg_id,
@@ -171,23 +184,20 @@ async def process_support_dms(settings: Settings, graph: GraphTeamsClient) -> in
     chats = await graph.list_support_one_on_one_chats(
         max_pages=settings.max_chat_pages,
     )
+    chats = _merge_tracked_chats(chats, state)
     logger.info(
-        "DMs recientes: %s chats oneOnOne (máx %s página(s))",
+        "DMs a revisar: %s chats oneOnOne (API + vigilados, máx %s página(s))",
         len(chats),
         settings.max_chat_pages,
     )
 
     replied_total = 0
-    skipped_stale = 0
     for chat in chats:
         chat_id = str(chat.get("id") or "")
         if not chat_id:
             continue
 
         cursor = state.chats.get(chat_id) or ChatCursor()
-        if not cursor.bootstrapped and _chat_is_stale(chat, state.watching_since):
-            skipped_stale += 1
-            continue
 
         try:
             messages = await graph.list_chat_messages(
@@ -210,8 +220,8 @@ async def process_support_dms(settings: Settings, graph: GraphTeamsClient) -> in
         state.chats[chat_id] = new_cursor
         replied_total += replied
 
-    if skipped_stale:
-        logger.debug("Chats sin actividad reciente omitidos: %s", skipped_stale)
+    if replied_total:
+        logger.info("Respuestas automáticas enviadas en este ciclo: %s", replied_total)
 
     state.bootstrapped = True
     save_state(settings.state_path, state)

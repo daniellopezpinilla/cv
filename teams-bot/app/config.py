@@ -93,7 +93,7 @@ def get_settings() -> Settings:
         state_path=state_path,
         force_off_hours=force,
         max_chat_pages=max(1, int(os.getenv("MAX_CHAT_PAGES", "1"))),
-        messages_per_chat=max(3, int(os.getenv("MESSAGES_PER_CHAT", "5"))),
+        messages_per_chat=max(3, int(os.getenv("MESSAGES_PER_CHAT", "10"))),
         host=os.getenv("HOST", "0.0.0.0").strip() or "0.0.0.0",
         port=int(os.getenv("PORT", "8000")),
     )

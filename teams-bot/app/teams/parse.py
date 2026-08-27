@@ -16,6 +16,14 @@ def strip_html(value: str) -> str:
     return _WS.sub(" ", text).strip()
 
 
+def is_user_chat_message(raw: dict[str, Any]) -> bool:
+    """Ignora eventos de sistema de Teams (no son mensajes de usuario)."""
+    msg_type = raw.get("messageType")
+    if msg_type and msg_type != "message":
+        return False
+    return True
+
+
 def graph_message_to_incoming(raw: dict[str, Any], chat_id: str = "") -> IncomingMessage:
     body = raw.get("body") or {}
     content = body.get("content") or ""

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import base64
+import logging
 import time
 from typing import Any
 from urllib.parse import quote
 
 import httpx
+
+from app.state import parse_graph_datetime
+
+logger = logging.getLogger("teams-bot.graph")
 
 _SCOPE = "https://graph.microsoft.com/.default"
 
@@ -48,6 +53,26 @@ def _auth_headers(token: str) -> dict[str, str]:
     }
 
 
+def _chat_activity_datetime(chat: dict[str, Any]):
+    preview = chat.get("lastMessagePreview") or {}
+    for candidate in (
+        chat.get("lastUpdatedDateTime"),
+        preview.get("createdDateTime"),
+    ):
+        dt = parse_graph_datetime(candidate)
+        if dt:
+            return dt
+    return None
+
+
+def _sort_chats_by_recent(chats: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        chats,
+        key=lambda c: (_chat_activity_datetime(c) or parse_graph_datetime("1970-01-01T00:00:00Z")),
+        reverse=True,
+    )
+
+
 class GraphTeamsClient:
     """Cliente Microsoft Graph para DMs de soporte, chat único o canal."""
 
@@ -69,6 +94,7 @@ class GraphTeamsClient:
         self._chat_id = chat_id
         self._team_id = team_id
         self._channel_id = channel_id
+        self._support_object_id: str | None = None
 
     @property
     def mode(self) -> str:
@@ -96,9 +122,10 @@ class GraphTeamsClient:
         chats: list[dict[str, Any]] = []
 
         base = f"https://graph.microsoft.com/v1.0/users/{user_seg}/chats"
-        # Intentar más recientes primero; si falla, lista sin orden
+        # Orden soportado por Graph: lastMessagePreview/createdDateTime
         start_urls = [
-            f"{base}?$top={page_size}&$filter=chatType eq 'oneOnOne'&$orderby=lastUpdatedDateTime desc",
+            f"{base}?$top={page_size}&$filter=chatType eq 'oneOnOne'"
+            f"&$orderby=lastMessagePreview/createdDateTime desc",
             f"{base}?$top={page_size}&$filter=chatType eq 'oneOnOne'",
             f"{base}?$top={page_size}",
         ]
@@ -133,9 +160,13 @@ class GraphTeamsClient:
                 continue
             seen.add(cid)
             unique.append(chat)
-        return unique
+
+        return _sort_chats_by_recent(unique)
 
     async def resolve_user_object_id(self, user_id_or_upn: str) -> str:
+        if self._support_object_id:
+            return self._support_object_id
+
         token = await self._token()
         user_seg = quote(user_id_or_upn, safe="@")
         url = f"https://graph.microsoft.com/v1.0/users/{user_seg}?$select=id,userPrincipalName,displayName"
@@ -143,14 +174,21 @@ class GraphTeamsClient:
             response = await client.get(url, headers=_auth_headers(token))
             response.raise_for_status()
             data = response.json()
-        return str(data.get("id") or "")
+        self._support_object_id = str(data.get("id") or "")
+        return self._support_object_id
 
     async def list_chat_messages(self, chat_id: str, top: int = 20) -> list[dict[str, Any]]:
         token = await self._token()
         chat_seg = quote(chat_id, safe="")
-        url = f"https://graph.microsoft.com/v1.0/chats/{chat_seg}/messages?$top={top}"
+        url = (
+            f"https://graph.microsoft.com/v1.0/chats/{chat_seg}/messages"
+            f"?$top={top}&$orderby=createdDateTime desc"
+        )
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.get(url, headers=_auth_headers(token))
+            if response.status_code == 400:
+                url = f"https://graph.microsoft.com/v1.0/chats/{chat_seg}/messages?$top={top}"
+                response = await client.get(url, headers=_auth_headers(token))
             response.raise_for_status()
             data = response.json()
         return list(data.get("value") or [])
@@ -213,8 +251,15 @@ class GraphTeamsClient:
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(url, headers=_auth_headers(token), json=payload)
             if response.is_success:
+                logger.info("Mensaje+PDF enviados al chat %s", (target_chat or "")[:24])
                 return response.json()
 
+            logger.warning(
+                "Fallo adjunto PDF chat=%s status=%s body=%s",
+                (target_chat or "")[:24],
+                response.status_code,
+                response.text[:500],
+            )
             fallback = {
                 "body": {
                     "contentType": "html",
@@ -224,5 +269,14 @@ class GraphTeamsClient:
                 }
             }
             retry = await client.post(url, headers=_auth_headers(token), json=fallback)
+            if retry.is_success:
+                logger.info("Mensaje de texto enviado (sin PDF) al chat %s", (target_chat or "")[:24])
+                return retry.json()
+            logger.error(
+                "Fallo envío chat=%s status=%s body=%s",
+                (target_chat or "")[:24],
+                retry.status_code,
+                retry.text[:500],
+            )
             retry.raise_for_status()
             return retry.json()
