@@ -10,9 +10,12 @@ from app.handlers.router import HandlerRouter
 from app.state import (
     ChatCursor,
     PollState,
+    ensure_watching_since,
+    is_after_watching_since,
     is_newer_than_cursor,
     load_state,
     mark_bootstrapped_now,
+    parse_graph_datetime,
     save_state,
 )
 from app.teams.graph import GraphTeamsClient
@@ -38,7 +41,6 @@ def build_router(settings: Settings, graph: GraphTeamsClient) -> HandlerRouter:
     return HandlerRouter(
         handlers=[
             OffHoursGuideHandler(settings, graph),
-            # Futuro: UnlockUserHandler(...), ChangeParamHandler(...), ...
         ]
     )
 
@@ -50,6 +52,18 @@ def _sort_oldest_first(raw_messages: list[dict[str, Any]]) -> list[dict[str, Any
     )
 
 
+def _chat_is_stale(chat: dict[str, Any], watching_since: str) -> bool:
+    """True si el chat no tuvo actividad desde que arrancó el bot."""
+    updated = chat.get("lastUpdatedDateTime")
+    if not updated or not watching_since:
+        return False
+    updated_dt = parse_graph_datetime(updated)
+    since_dt = parse_graph_datetime(watching_since)
+    if updated_dt and since_dt:
+        return updated_dt < since_dt
+    return False
+
+
 async def _process_chat_messages(
     *,
     chat_id: str,
@@ -57,10 +71,12 @@ async def _process_chat_messages(
     cursor: ChatCursor,
     router: HandlerRouter,
     support_object_id: str = "",
+    watching_since: str = "",
+    legacy_bootstrap: bool = False,
 ) -> tuple[ChatCursor, int]:
     ordered = _sort_oldest_first(raw_messages)
     replied = 0
-    bootstrap = not cursor.bootstrapped
+    bootstrap = legacy_bootstrap and not cursor.bootstrapped
 
     if bootstrap and not ordered:
         return (
@@ -77,6 +93,10 @@ async def _process_chat_messages(
         created = raw.get("createdDateTime")
         if not msg_id:
             continue
+
+        if watching_since and not is_after_watching_since(created, watching_since):
+            continue
+
         if not is_newer_than_cursor(message_id=msg_id, created=created, cursor=cursor):
             continue
 
@@ -88,30 +108,37 @@ async def _process_chat_messages(
                 chat_id[:24],
                 msg_id,
             )
+        elif support_object_id and incoming.from_id == support_object_id:
+            logger.info(
+                "Chat %s | mensaje %s de soporte (ignorado)",
+                chat_id[:24],
+                msg_id,
+            )
         else:
-            # No auto-responder mensajes de la propia cuenta de soporte
-            if support_object_id and incoming.from_id == support_object_id:
-                logger.info(
-                    "Chat %s | mensaje %s de soporte (ignorado)",
-                    chat_id[:24],
-                    msg_id,
-                )
-            else:
-                result = await router.dispatch(incoming)
-                logger.info(
-                    "Chat %s | mensaje %s de %s → handled=%s (%s)",
-                    chat_id[:24],
-                    msg_id,
-                    incoming.from_name or incoming.from_id,
-                    result.handled,
-                    result.detail,
-                )
-                if result.handled:
-                    replied += 1
+            result = await router.dispatch(incoming)
+            logger.info(
+                "Chat %s | mensaje %s de %s → handled=%s (%s)",
+                chat_id[:24],
+                msg_id,
+                incoming.from_name or incoming.from_id,
+                result.handled,
+                result.detail,
+            )
+            if result.handled:
+                replied += 1
 
         cursor = ChatCursor(
             last_message_id=msg_id,
             last_created=str(created or ""),
+            bootstrapped=True,
+        )
+
+    if ordered and not cursor.bootstrapped:
+        # Marcar chat visto sin mensajes nuevos (evita re-leer cada ciclo)
+        last = ordered[-1]
+        cursor = ChatCursor(
+            last_message_id=str(last.get("id") or ""),
+            last_created=str(last.get("createdDateTime") or ""),
             bootstrapped=True,
         )
 
@@ -122,27 +149,51 @@ async def process_support_dms(settings: Settings, graph: GraphTeamsClient) -> in
     router = build_router(settings, graph)
     state = load_state(settings.state_path)
 
+    prev_watching = state.watching_since
+    state = ensure_watching_since(state)
+    if not prev_watching:
+        save_state(settings.state_path, state)
+        logger.info(
+            "Modo rápido activo: solo mensajes nuevos desde %s (sin recorrer historial).",
+            state.watching_since,
+        )
+
     support_object_id = ""
     try:
         support_object_id = await graph.resolve_user_object_id(settings.support_user_id)
     except Exception:
-        logger.exception(
+        logger.warning(
             "No se pudo resolver SUPPORT_USER_ID=%s (¿falta User.Read.All?). "
             "Se continúa sin filtrar mensajes de la cuenta soporte.",
             settings.support_user_id,
         )
 
-    chats = await graph.list_support_one_on_one_chats()
-    logger.info("DMs de soporte: %s chats oneOnOne encontrados", len(chats))
+    chats = await graph.list_support_one_on_one_chats(
+        max_pages=settings.max_chat_pages,
+    )
+    logger.info(
+        "DMs recientes: %s chats oneOnOne (máx %s página(s))",
+        len(chats),
+        settings.max_chat_pages,
+    )
 
     replied_total = 0
+    skipped_stale = 0
     for chat in chats:
         chat_id = str(chat.get("id") or "")
         if not chat_id:
             continue
+
         cursor = state.chats.get(chat_id) or ChatCursor()
+        if not cursor.bootstrapped and _chat_is_stale(chat, state.watching_since):
+            skipped_stale += 1
+            continue
+
         try:
-            messages = await graph.list_chat_messages(chat_id, top=15)
+            messages = await graph.list_chat_messages(
+                chat_id,
+                top=settings.messages_per_chat,
+            )
         except Exception:
             logger.exception("No se pudieron leer mensajes del chat %s", chat_id[:40])
             continue
@@ -153,9 +204,14 @@ async def process_support_dms(settings: Settings, graph: GraphTeamsClient) -> in
             cursor=cursor,
             router=router,
             support_object_id=support_object_id,
+            watching_since=state.watching_since,
+            legacy_bootstrap=False,
         )
         state.chats[chat_id] = new_cursor
         replied_total += replied
+
+    if skipped_stale:
+        logger.debug("Chats sin actividad reciente omitidos: %s", skipped_stale)
 
     state.bootstrapped = True
     save_state(settings.state_path, state)
@@ -189,6 +245,7 @@ async def process_single_target(settings: Settings, graph: GraphTeamsClient) -> 
         cursor=cursor,
         router=router,
         support_object_id="",
+        legacy_bootstrap=True,
     )
     state.chats[chat_key] = new_cursor
     state.last_message_id = new_cursor.last_message_id
@@ -212,11 +269,12 @@ async def process_once(settings: Settings | None = None) -> int:
 async def run_forever() -> None:
     settings = get_settings()
     logger.info(
-        "Poller iniciado mode=%s interval=%ss tz=%s force_off_hours=%s",
+        "Poller iniciado mode=%s interval=%ss tz=%s force_off_hours=%s pages=%s",
         settings.target_mode,
         settings.poll_interval_seconds,
         settings.timezone,
         settings.force_off_hours,
+        settings.max_chat_pages,
     )
     if settings.target_mode == "support_dms":
         logger.info("Vigilando DMs de SUPPORT_USER_ID=%s", settings.support_user_id)

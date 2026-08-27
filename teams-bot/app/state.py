@@ -18,6 +18,8 @@ class PollState:
     """Estado multi-chat (DMs) con compatibilidad al formato viejo de un solo chat."""
 
     chats: dict[str, ChatCursor] = field(default_factory=dict)
+    # ISO UTC: solo se procesan mensajes posteriores a este instante (modo rápido)
+    watching_since: str = ""
     # legacy single-chat fields
     last_message_id: str = ""
     last_created: str = ""
@@ -46,6 +48,7 @@ def load_state(path: Path) -> PollState:
 
     return PollState(
         chats=chats,
+        watching_since=str(data.get("watching_since") or ""),
         last_message_id=str(data.get("last_message_id") or ""),
         last_created=str(data.get("last_created") or ""),
         bootstrapped=bool(data.get("bootstrapped")),
@@ -55,6 +58,7 @@ def load_state(path: Path) -> PollState:
 def save_state(path: Path, state: PollState) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
+        "watching_since": state.watching_since,
         "bootstrapped": state.bootstrapped,
         "last_message_id": state.last_message_id,
         "last_created": state.last_created,
@@ -70,6 +74,23 @@ def save_state(path: Path, state: PollState) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def ensure_watching_since(state: PollState) -> PollState:
+    """Marca el instante desde el cual vigilar mensajes nuevos (sin leer historial)."""
+    if state.watching_since:
+        return state
+    return PollState(
+        chats=state.chats,
+        watching_since=utc_now_iso(),
+        last_message_id=state.last_message_id,
+        last_created=state.last_created,
+        bootstrapped=True,
+    )
+
+
 def parse_graph_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -78,6 +99,16 @@ def parse_graph_datetime(value: str | None) -> datetime | None:
         return datetime.fromisoformat(normalized)
     except ValueError:
         return None
+
+
+def is_after_watching_since(created: str | None, watching_since: str) -> bool:
+    if not watching_since:
+        return True
+    created_dt = parse_graph_datetime(created)
+    since_dt = parse_graph_datetime(watching_since)
+    if created_dt and since_dt:
+        return created_dt >= since_dt
+    return True
 
 
 def is_newer_than_cursor(
@@ -133,8 +164,9 @@ def is_newer_than_state(
 def mark_bootstrapped_now(path: Path) -> PollState:
     state = PollState(
         last_message_id="",
-        last_created=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        last_created=utc_now_iso(),
         bootstrapped=True,
+        watching_since=utc_now_iso(),
         chats={},
     )
     save_state(path, state)

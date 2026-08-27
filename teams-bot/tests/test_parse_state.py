@@ -1,7 +1,10 @@
-from datetime import datetime, timezone
-from pathlib import Path
-
-from app.state import PollState, is_newer_than_state, parse_graph_datetime
+from app.state import (
+    PollState,
+    ensure_watching_since,
+    is_after_watching_since,
+    is_newer_than_state,
+    parse_graph_datetime,
+)
 from app.teams.parse import graph_message_to_incoming, strip_html
 
 
@@ -56,3 +59,17 @@ def test_parse_graph_datetime() -> None:
     dt = parse_graph_datetime("2026-03-20T23:00:00.000Z")
     assert dt is not None
     assert dt.tzinfo is not None or dt.utcoffset() is not None
+
+
+def test_ensure_watching_since_sets_once() -> None:
+    state = PollState()
+    updated = ensure_watching_since(state)
+    assert updated.watching_since
+    again = ensure_watching_since(updated)
+    assert again.watching_since == updated.watching_since
+
+
+def test_is_after_watching_since() -> None:
+    since = "2026-08-27T14:00:00.000Z"
+    assert is_after_watching_since("2026-08-27T14:01:00.000Z", since)
+    assert not is_after_watching_since("2026-08-27T13:59:00.000Z", since)

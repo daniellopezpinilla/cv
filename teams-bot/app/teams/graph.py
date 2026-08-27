@@ -81,8 +81,13 @@ class GraphTeamsClient:
     async def _token(self) -> str:
         return await get_graph_token(self._app_id, self._app_password, self._tenant_id)
 
-    async def list_support_one_on_one_chats(self) -> list[dict[str, Any]]:
-        """Lista chats 1:1 de la cuenta de soporte (cada usuario = un chat)."""
+    async def list_support_one_on_one_chats(
+        self,
+        *,
+        max_pages: int = 1,
+        page_size: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Lista chats 1:1 recientes de la cuenta de soporte (paginación limitada)."""
         if not self._support_user_id:
             raise RuntimeError("SUPPORT_USER_ID no configurado")
 
@@ -90,31 +95,33 @@ class GraphTeamsClient:
         token = await self._token()
         chats: list[dict[str, Any]] = []
 
-        # Primero intentar con filtro; si el tenant no lo soporta, listar y filtrar en cliente
-        urls = [
-            f"https://graph.microsoft.com/v1.0/users/{user_seg}/chats"
-            f"?$top=50&$filter=chatType eq 'oneOnOne'",
-            f"https://graph.microsoft.com/v1.0/users/{user_seg}/chats?$top=50",
+        base = f"https://graph.microsoft.com/v1.0/users/{user_seg}/chats"
+        # Intentar más recientes primero; si falla, lista sin orden
+        start_urls = [
+            f"{base}?$top={page_size}&$filter=chatType eq 'oneOnOne'&$orderby=lastUpdatedDateTime desc",
+            f"{base}?$top={page_size}&$filter=chatType eq 'oneOnOne'",
+            f"{base}?$top={page_size}",
         ]
 
         async with httpx.AsyncClient(timeout=60.0) as client:
-            for start_url in urls:
+            for start_url in start_urls:
                 url: str | None = start_url
-                batch_ok = True
                 temp: list[dict[str, Any]] = []
-                while url:
+                pages = 0
+                ok = True
+                while url and pages < max_pages:
                     response = await client.get(url, headers=_auth_headers(token))
-                    if response.status_code == 400 and "$filter" in start_url:
-                        batch_ok = False
+                    if response.status_code == 400 and pages == 0:
+                        ok = False
                         break
                     response.raise_for_status()
                     data = response.json()
                     temp.extend(list(data.get("value") or []))
                     url = data.get("@odata.nextLink")
-                if not batch_ok:
-                    continue
-                chats = temp
-                break
+                    pages += 1
+                if ok and temp:
+                    chats = temp
+                    break
 
         unique: list[dict[str, Any]] = []
         seen: set[str] = set()

@@ -54,8 +54,8 @@ python -m app.poller
 1. El correo de la cuenta de soporte (UPN), p. ej. `soporteAppsHalliburton@ecopetrol.com.co`, **o**
 2. En Entra ID → Users → esa cuenta → **Object ID** (GUID)
 
-## Pruebas
+## Modo rápido (DMs)
 
-```powershell
-pytest -q
-```
+No recorre todo el historial al arrancar. Guarda `watching_since` y solo procesa mensajes **posteriores** a ese instante. Por ciclo revisa los chats 1:1 más recientes (`MAX_CHAT_PAGES=1` ≈ 50 chats).
+
+Si migras de una versión lenta, borra `data/poll_state.json` una vez para reiniciar el punto de vigilancia.
