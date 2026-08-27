@@ -7,7 +7,6 @@ from typing import Any
 from app.models import IncomingMessage
 from app.state import parse_graph_datetime
 
-
 _HTML_TAG = re.compile(r"<[^>]+>")
 _WS = re.compile(r"\s+")
 
@@ -17,10 +16,14 @@ def strip_html(value: str) -> str:
     return _WS.sub(" ", text).strip()
 
 
-def graph_message_to_incoming(raw: dict[str, Any]) -> IncomingMessage:
+def graph_message_to_incoming(raw: dict[str, Any], chat_id: str = "") -> IncomingMessage:
     body = raw.get("body") or {}
     content = body.get("content") or ""
-    text = strip_html(content) if (body.get("contentType") or "").lower() == "html" else (content or "").strip()
+    text = (
+        strip_html(content)
+        if (body.get("contentType") or "").lower() == "html"
+        else (content or "").strip()
+    )
 
     from_block = raw.get("from") or {}
     user = from_block.get("user") or {}
@@ -40,5 +43,6 @@ def graph_message_to_incoming(raw: dict[str, Any]) -> IncomingMessage:
         from_name=from_name,
         created_at=created_at,
         is_from_app=is_from_app,
+        chat_id=chat_id,
         raw=raw,
     )

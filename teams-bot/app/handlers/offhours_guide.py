@@ -21,6 +21,8 @@ class OffHoursGuideHandler(MessageHandler):
             return False
         if not (message.text or message.raw.get("attachments")):
             return False
+        if self._settings.force_off_hours:
+            return True
         return is_off_hours(timezone=self._settings.timezone)
 
     async def handle(self, message: IncomingMessage) -> HandlerResult:  # type: ignore[override]
@@ -29,6 +31,7 @@ class OffHoursGuideHandler(MessageHandler):
             text=self._settings.reply_text,
             pdf_bytes=pdf_bytes,
             pdf_filename=self._settings.pdf_filename,
+            chat_id=message.chat_id or None,
         )
         return HandlerResult(
             handled=True,

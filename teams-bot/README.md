@@ -2,8 +2,18 @@
 
 Responde automáticamente **fuera de horario laboral (Bogotá)** con un mensaje y un **PDF** indicando que se debe crear un caso.
 
-> **Cambio de plan:** no requiere Messaging endpoint ni URL pública de TI.  
-> El programa corre en la **Windows dedicada** y **consulta Teams** vía Microsoft Graph.
+> No requiere Messaging endpoint. Corre en la Windows dedicada y consulta Teams vía Microsoft Graph.
+
+## Caso real: mensajes directos a la cuenta de soporte
+
+Cada persona que escribe a `soporte@...` abre un **chat 1:1 distinto**.  
+Por eso **no** uses un solo `TEAMS_CHAT_ID`. Usa:
+
+```env
+SUPPORT_USER_ID=soporteAppsHalliburton@ecopetrol.com.co
+```
+
+El poller lista todos los chats `oneOnOne` de esa cuenta y responde en cada uno.
 
 ## Horario (America/Bogota)
 
@@ -11,30 +21,21 @@ Responde automáticamente **fuera de horario laboral (Bogotá)** con un mensaje 
 |--------|-----|
 | Lun–Vie 18:00–05:59 | Activo |
 | Sábado y domingo (todo el día) | Activo |
-| Lun–Vie 06:00–17:59 | Silencio (atiende el equipo; igual marca mensajes como vistos) |
+| Lun–Vie 06:00–17:59 | Silencio |
 
-## Cómo funciona
+Prueba en horario laboral: `FORCE_OFF_HOURS=true` en `.env` (quítalo después).
 
-```text
-Windows dedicada
-  → cada N segundos pregunta a Graph: ¿hay mensajes nuevos?
-  → si es fuera de horario → responde texto + PDF
-  → si es horario laboral → no responde (solo avanza el cursor)
-```
+## Permisos Graph (Aplicación + admin consent)
 
-## Permisos Graph (App Registration) — pedir admin consent
-
-Para **canal**:
-- `ChannelMessage.Read.All`
-- `ChannelMessage.Send`
-
-Para **chat**:
+Mínimo para DMs:
 - `Chat.Read.All`
-- `Chat.ReadWrite` o `Chat.ReadWrite.All` (según lo que permita el tenant)
+- `Chat.ReadWrite.All`
 
-Tipo: **Application permissions** + **Grant admin consent**.
+Recomendado:
+- `User.Read.All` (resolver el usuario de soporte y no auto-responderse)
+- `ChannelMessage.Read.All` / `ChannelMessage.Send` (si más adelante usan canal)
 
-## Setup en Windows dedicada
+## Setup
 
 ```powershell
 cd teams-bot
@@ -42,48 +43,19 @@ python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements.txt
 copy .env.example .env
-```
-
-Edita `.env`:
-1. `MICROSOFT_APP_ID`, `MICROSOFT_APP_PASSWORD`, `MICROSOFT_APP_TENANT_ID`
-2. `TEAMS_CHAT_ID` **o** `TEAMS_TEAM_ID` + `TEAMS_CHANNEL_ID`
-3. Reemplaza `assets\guia_crear_caso.pdf` por tu guía real
-
-Arranque:
-
-```powershell
+# Edita .env: App ID, secret, tenant, SUPPORT_USER_ID
+# Reemplaza assets\guia_crear_caso.pdf
+Remove-Item .\data\poll_state.json -ErrorAction SilentlyContinue
 python -m app.poller
 ```
 
-Deja el proceso corriendo (Task Scheduler al inicio de Windows).
+## Cómo obtener SUPPORT_USER_ID
 
-## Cómo obtener el Chat ID / Channel ID
-
-1. Abre [Graph Explorer](https://developer.microsoft.com/graph/graph-explorer) con una cuenta que vea el chat/canal.
-2. Chat: `GET https://graph.microsoft.com/v1.0/me/chats` y copia el `id`.
-3. Canal: `GET https://graph.microsoft.com/v1.0/teams` → luego  
-   `GET https://graph.microsoft.com/v1.0/teams/{team-id}/channels`.
-
-## Estructura (extensible)
-
-```text
-app/
-  poller.py              # entrada principal (sin URL pública)
-  schedule.py            # horario Bogotá
-  handlers/offhours_guide.py
-  teams/graph.py         # leer/enviar vía Graph
-```
-
-Función nueva = nuevo `MessageHandler` registrado en `build_router()` dentro de `poller.py`.
+1. El correo de la cuenta de soporte (UPN), p. ej. `soporteAppsHalliburton@ecopetrol.com.co`, **o**
+2. En Entra ID → Users → esa cuenta → **Object ID** (GUID)
 
 ## Pruebas
 
 ```powershell
 pytest -q
 ```
-
-## Seguridad
-
-1. Rota cualquier secret que se haya compartido.
-2. No subas `.env` ni `data/poll_state.json` a GitHub.
-3. El PDF en `assets/` es placeholder.

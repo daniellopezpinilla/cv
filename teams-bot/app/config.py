@@ -35,23 +35,28 @@ class Settings:
     reply_text: str
     pdf_path: Path
     pdf_filename: str
-    # Destino Teams (uno de los dos modos)
-    teams_chat_id: str
+    # Modos de destino (elige uno)
+    support_user_id: str  # UPN o object id de la cuenta de soporte (DMs)
+    teams_chat_id: str  # un solo chat (legacy / prueba)
     teams_team_id: str
     teams_channel_id: str
     poll_interval_seconds: int
     state_path: Path
+    force_off_hours: bool
     host: str
     port: int
 
     @property
     def target_mode(self) -> str:
+        if self.support_user_id:
+            return "support_dms"
         if self.teams_chat_id:
             return "chat"
         if self.teams_team_id and self.teams_channel_id:
             return "channel"
         raise RuntimeError(
-            "Configura TEAMS_CHAT_ID o el par TEAMS_TEAM_ID + TEAMS_CHANNEL_ID"
+            "Configura SUPPORT_USER_ID (recomendado para DMs), "
+            "TEAMS_CHAT_ID, o TEAMS_TEAM_ID + TEAMS_CHANNEL_ID"
         )
 
 
@@ -67,6 +72,7 @@ def get_settings() -> Settings:
         state_path = ROOT_DIR / state_path
 
     reply = os.getenv("REPLY_TEXT", DEFAULT_REPLY).replace("\\n", "\n")
+    force = os.getenv("FORCE_OFF_HOURS", "").strip().lower() in {"1", "true", "yes", "si", "sí"}
 
     settings = Settings(
         app_id=_env("MICROSOFT_APP_ID"),
@@ -77,14 +83,15 @@ def get_settings() -> Settings:
         pdf_path=pdf_path,
         pdf_filename=os.getenv("PDF_FILENAME", "guia_crear_caso.pdf").strip()
         or "guia_crear_caso.pdf",
+        support_user_id=os.getenv("SUPPORT_USER_ID", "").strip(),
         teams_chat_id=os.getenv("TEAMS_CHAT_ID", "").strip(),
         teams_team_id=os.getenv("TEAMS_TEAM_ID", "").strip(),
         teams_channel_id=os.getenv("TEAMS_CHANNEL_ID", "").strip(),
         poll_interval_seconds=max(15, int(os.getenv("POLL_INTERVAL_SECONDS", "60"))),
         state_path=state_path,
+        force_off_hours=force,
         host=os.getenv("HOST", "0.0.0.0").strip() or "0.0.0.0",
         port=int(os.getenv("PORT", "8000")),
     )
-    # Valida destino temprano
     _ = settings.target_mode
     return settings

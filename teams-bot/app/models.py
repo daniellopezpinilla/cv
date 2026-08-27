@@ -15,4 +15,5 @@ class IncomingMessage:
     from_name: str
     created_at: datetime | None
     is_from_app: bool
+    chat_id: str = ""
     raw: dict[str, Any] = field(repr=False, default_factory=dict)
