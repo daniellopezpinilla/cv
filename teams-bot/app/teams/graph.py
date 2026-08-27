@@ -220,17 +220,67 @@ class GraphTeamsClient:
     ) -> dict[str, Any]:
         token = await self._token()
         target_chat = chat_id or self._chat_id
-        if target_chat:
-            url = f"https://graph.microsoft.com/v1.0/chats/{quote(target_chat, safe='')}/messages"
-        else:
+        if not target_chat:
             url = (
                 "https://graph.microsoft.com/v1.0/teams/"
                 f"{quote(self._team_id, safe='')}/channels/{quote(self._channel_id, safe='')}/messages"
             )
+            return await self._post_message(token, url, self._pdf_payload(text, pdf_bytes, pdf_filename))
 
+        chat_seg = quote(target_chat, safe="")
+        urls = [f"https://graph.microsoft.com/v1.0/chats/{chat_seg}/messages"]
+        if self._support_user_id:
+            user_seg = quote(self._support_user_id, safe="@")
+            urls.append(
+                f"https://graph.microsoft.com/v1.0/users/{user_seg}/chats/{chat_seg}/messages"
+            )
+
+        last_error = ""
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            for url in urls:
+                # 1) Texto simple (diagnóstico + fallback útil)
+                plain = {"body": {"contentType": "text", "content": text}}
+                response = await client.post(url, headers=_auth_headers(token), json=plain)
+                if response.is_success:
+                    logger.info("Mensaje de texto enviado al chat %s", target_chat[:24])
+                    # 2) Intentar PDF en mensaje aparte (algunos tenants bloquean hostedContents)
+                    pdf_payload = self._pdf_payload(text, pdf_bytes, pdf_filename)
+                    pdf_resp = await client.post(url, headers=_auth_headers(token), json=pdf_payload)
+                    if pdf_resp.is_success:
+                        logger.info("PDF enviado al chat %s", target_chat[:24])
+                    else:
+                        logger.warning(
+                            "Texto OK pero PDF falló chat=%s status=%s body=%s",
+                            target_chat[:24],
+                            pdf_resp.status_code,
+                            pdf_resp.text[:400],
+                        )
+                    return response.json()
+
+                last_error = response.text[:500]
+                logger.warning(
+                    "Fallo envío texto chat=%s url=%s status=%s body=%s",
+                    target_chat[:24],
+                    url.split("/v1.0/")[-1][:60],
+                    response.status_code,
+                    last_error,
+                )
+                if response.status_code == 403:
+                    logger.error(
+                        "403 al enviar: confirma Chat.ReadWrite.All (Aplicación + admin consent) "
+                        "y política Teams CsApplicationAccessPolicy para la App ID."
+                    )
+
+        raise RuntimeError(
+            f"No se pudo enviar mensaje al chat {target_chat[:24]}. "
+            f"Último error: {last_error}"
+        )
+
+    @staticmethod
+    def _pdf_payload(text: str, pdf_bytes: bytes, pdf_filename: str) -> dict[str, Any]:
         encoded = base64.b64encode(pdf_bytes).decode("ascii")
         html = text.replace("\n", "<br/>") + '<br/><attachment id="1"></attachment>'
-        payload: dict[str, Any] = {
+        return {
             "body": {"contentType": "html", "content": html},
             "attachments": [
                 {
@@ -248,35 +298,11 @@ class GraphTeamsClient:
                 }
             ],
         }
+
+    async def _post_message(
+        self, token: str, url: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(url, headers=_auth_headers(token), json=payload)
-            if response.is_success:
-                logger.info("Mensaje+PDF enviados al chat %s", (target_chat or "")[:24])
-                return response.json()
-
-            logger.warning(
-                "Fallo adjunto PDF chat=%s status=%s body=%s",
-                (target_chat or "")[:24],
-                response.status_code,
-                response.text[:500],
-            )
-            fallback = {
-                "body": {
-                    "contentType": "html",
-                    "content": html.replace('<attachment id="1"></attachment>', "")
-                    + "<br/><i>(No se pudo adjuntar el PDF automáticamente; "
-                    "solicita la guía a soporte.)</i>",
-                }
-            }
-            retry = await client.post(url, headers=_auth_headers(token), json=fallback)
-            if retry.is_success:
-                logger.info("Mensaje de texto enviado (sin PDF) al chat %s", (target_chat or "")[:24])
-                return retry.json()
-            logger.error(
-                "Fallo envío chat=%s status=%s body=%s",
-                (target_chat or "")[:24],
-                retry.status_code,
-                retry.text[:500],
-            )
-            retry.raise_for_status()
-            return retry.json()
+            response.raise_for_status()
+            return response.json()
