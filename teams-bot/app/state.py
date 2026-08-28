@@ -108,6 +108,31 @@ def is_after_watching_since(created: str | None, watching_since: str) -> bool:
     since_dt = parse_graph_datetime(watching_since)
     if created_dt and since_dt:
         return created_dt >= since_dt
+    return False
+
+
+def chat_last_activity(chat: dict[str, object]) -> datetime | None:
+    preview = chat.get("lastMessagePreview") or {}
+    if not isinstance(preview, dict):
+        preview = {}
+    for candidate in (
+        chat.get("lastUpdatedDateTime"),
+        preview.get("createdDateTime"),
+    ):
+        dt = parse_graph_datetime(str(candidate) if candidate else None)
+        if dt:
+            return dt
+    return None
+
+
+def is_chat_active_since(chat: dict[str, object], watching_since: str) -> bool:
+    """True si el chat tuvo actividad en o después del instante de vigilancia."""
+    if not watching_since:
+        return True
+    activity = chat_last_activity(chat)
+    since_dt = parse_graph_datetime(watching_since)
+    if activity and since_dt:
+        return activity >= since_dt
     return True
 
 
