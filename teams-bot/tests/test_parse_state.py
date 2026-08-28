@@ -2,6 +2,7 @@ from app.state import (
     PollState,
     ensure_watching_since,
     is_after_watching_since,
+    is_chat_active_since,
     is_newer_than_state,
     parse_graph_datetime,
 )
@@ -78,3 +79,19 @@ def test_is_after_watching_since() -> None:
     since = "2026-08-27T14:00:00.000Z"
     assert is_after_watching_since("2026-08-27T14:01:00.000Z", since)
     assert not is_after_watching_since("2026-08-27T13:59:00.000Z", since)
+
+
+def test_is_chat_active_since() -> None:
+    since = "2026-08-27T14:00:00.000Z"
+    active = {
+        "lastMessagePreview": {"createdDateTime": "2026-08-27T15:00:00.000Z"},
+    }
+    inactive = {
+        "lastMessagePreview": {"createdDateTime": "2026-08-27T10:00:00.000Z"},
+    }
+    stale_updated_only = {
+        "lastUpdatedDateTime": "2026-08-27T10:00:00.000Z",
+    }
+    assert is_chat_active_since(active, since)
+    assert not is_chat_active_since(inactive, since)
+    assert is_chat_active_since(stale_updated_only, since)
