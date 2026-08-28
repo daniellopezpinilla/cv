@@ -111,28 +111,38 @@ def is_after_watching_since(created: str | None, watching_since: str) -> bool:
     return False
 
 
-def chat_last_activity(chat: dict[str, object]) -> datetime | None:
+def chat_last_message_time(chat: dict[str, object]) -> datetime | None:
+    """Hora del último mensaje según lastMessagePreview (la señal fiable en Graph)."""
     preview = chat.get("lastMessagePreview") or {}
     if not isinstance(preview, dict):
         preview = {}
-    for candidate in (
-        chat.get("lastUpdatedDateTime"),
-        preview.get("createdDateTime"),
-    ):
-        dt = parse_graph_datetime(str(candidate) if candidate else None)
-        if dt:
-            return dt
-    return None
+    return parse_graph_datetime(
+        str(preview.get("createdDateTime") or "") or None
+    )
+
+
+def chat_last_activity(chat: dict[str, object]) -> datetime | None:
+    """Actividad reciente: prioriza preview del último mensaje, no lastUpdatedDateTime."""
+    preview_dt = chat_last_message_time(chat)
+    if preview_dt:
+        return preview_dt
+    return parse_graph_datetime(
+        str(chat.get("lastUpdatedDateTime") or "") or None
+    )
 
 
 def is_chat_active_since(chat: dict[str, object], watching_since: str) -> bool:
     """True si el chat tuvo actividad en o después del instante de vigilancia."""
     if not watching_since:
         return True
-    activity = chat_last_activity(chat)
     since_dt = parse_graph_datetime(watching_since)
-    if activity and since_dt:
-        return activity >= since_dt
+    if not since_dt:
+        return True
+    # Solo omitir si Graph reporta explícitamente un último mensaje anterior al arranque.
+    # lastUpdatedDateTime del chat suele ser antiguo y no refleja mensajes nuevos.
+    preview_dt = chat_last_message_time(chat)
+    if preview_dt:
+        return preview_dt >= since_dt
     return True
 
 

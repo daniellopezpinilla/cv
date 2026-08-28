@@ -89,5 +89,9 @@ def test_is_chat_active_since() -> None:
     inactive = {
         "lastMessagePreview": {"createdDateTime": "2026-08-27T10:00:00.000Z"},
     }
+    stale_updated_only = {
+        "lastUpdatedDateTime": "2026-08-27T10:00:00.000Z",
+    }
     assert is_chat_active_since(active, since)
     assert not is_chat_active_since(inactive, since)
+    assert is_chat_active_since(stale_updated_only, since)
