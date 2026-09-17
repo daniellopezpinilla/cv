@@ -55,22 +55,22 @@ def _auth_headers(token: str) -> dict[str, str]:
 
 def _chat_activity_datetime(chat: dict[str, Any]):
     preview = chat.get("lastMessagePreview") or {}
-    for candidate in (
-        chat.get("lastUpdatedDateTime"),
-        preview.get("createdDateTime"),
-    ):
-        dt = parse_graph_datetime(candidate)
-        if dt:
-            return dt
-    return None
+    dt = parse_graph_datetime(preview.get("createdDateTime"))
+    if dt:
+        return dt
+    return parse_graph_datetime(chat.get("lastUpdatedDateTime"))
 
 
-def _sort_chats_by_recent(chats: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def sort_chats_by_recent(chats: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         chats,
         key=lambda c: (_chat_activity_datetime(c) or parse_graph_datetime("1970-01-01T00:00:00Z")),
         reverse=True,
     )
+
+
+def _sort_chats_by_recent(chats: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sort_chats_by_recent(chats)
 
 
 class GraphTeamsClient:
