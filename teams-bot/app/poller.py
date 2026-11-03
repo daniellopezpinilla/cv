@@ -12,12 +12,13 @@ from app.state import (
     PollState,
     ensure_watching_since,
     is_after_watching_since,
+    is_chat_active_since,
     is_newer_than_cursor,
     load_state,
     mark_bootstrapped_now,
     save_state,
 )
-from app.teams.graph import GraphTeamsClient
+from app.teams.graph import GraphTeamsClient, sort_chats_by_recent
 from app.teams.parse import graph_message_to_incoming, is_user_chat_message
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -54,17 +55,108 @@ def _sort_oldest_first(raw_messages: list[dict[str, Any]]) -> list[dict[str, Any
 def _merge_tracked_chats(
     api_chats: list[dict[str, Any]],
     state: PollState,
+    *,
+    watching_since: str = "",
+    max_extra: int = 5,
 ) -> list[dict[str, Any]]:
-    """Une chats recientes de Graph con chats ya vigilados en estado."""
+    """Chats recientes de Graph + pocos vigilados con actividad reciente (no todo el historial)."""
     by_id: dict[str, dict[str, Any]] = {}
     for chat in api_chats:
         cid = str(chat.get("id") or "")
         if cid:
             by_id[cid] = chat
-    for chat_id in state.chats:
-        if chat_id not in by_id:
-            by_id[chat_id] = {"id": chat_id, "chatType": "oneOnOne"}
+
+    extras: list[tuple[str, str, dict[str, Any]]] = []
+    for chat_id, cursor in state.chats.items():
+        if chat_id in by_id:
+            continue
+        if watching_since and cursor.last_created:
+            if not is_after_watching_since(cursor.last_created, watching_since):
+                continue
+        extras.append(
+            (
+                cursor.last_created or "",
+                chat_id,
+                {"id": chat_id, "chatType": "oneOnOne"},
+            )
+        )
+
+    for _, chat_id, stub in sorted(extras, reverse=True)[:max_extra]:
+        by_id[chat_id] = stub
+
     return list(by_id.values())
+
+
+def _cursor_from_message(raw: dict[str, Any]) -> ChatCursor:
+    return ChatCursor(
+        last_message_id=str(raw.get("id") or ""),
+        last_created=str(raw.get("createdDateTime") or ""),
+        bootstrapped=True,
+    )
+
+
+def _collect_new_user_messages(
+    *,
+    ordered: list[dict[str, Any]],
+    cursor: ChatCursor,
+    watching_since: str,
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for raw in ordered:
+        msg_id = str(raw.get("id") or "")
+        created = raw.get("createdDateTime")
+        if not msg_id:
+            continue
+        if not is_user_chat_message(raw):
+            continue
+        if watching_since and not is_after_watching_since(created, watching_since):
+            continue
+        if not is_newer_than_cursor(message_id=msg_id, created=created, cursor=cursor):
+            continue
+        candidates.append(raw)
+    return candidates
+
+
+async def _dispatch_latest_candidate(
+    *,
+    chat_id: str,
+    candidates: list[dict[str, Any]],
+    router: HandlerRouter,
+    support_object_id: str,
+) -> int:
+    if not candidates:
+        return 0
+
+    latest = candidates[-1]
+    msg_id = str(latest.get("id") or "")
+    incoming = graph_message_to_incoming(latest, chat_id=chat_id)
+
+    if support_object_id and incoming.from_id == support_object_id:
+        logger.info(
+            "Chat %s | mensaje %s de soporte (ignorado)",
+            chat_id[:24],
+            msg_id,
+        )
+        return 0
+
+    try:
+        result = await router.dispatch(incoming)
+        logger.info(
+            "Chat %s | mensaje %s de %s → handled=%s (%s)",
+            chat_id[:24],
+            msg_id,
+            incoming.from_name or incoming.from_id,
+            result.handled,
+            result.detail,
+        )
+        return 1 if result.handled else 0
+    except Exception:
+        logger.exception(
+            "Error respondiendo en chat %s al mensaje %s",
+            chat_id[:24],
+            msg_id,
+        )
+        return 0
 
 
 async def _process_chat_messages(
@@ -78,84 +170,53 @@ async def _process_chat_messages(
     legacy_bootstrap: bool = False,
 ) -> tuple[ChatCursor, int]:
     ordered = _sort_oldest_first(raw_messages)
-    replied = 0
+
+    if not ordered:
+        if not cursor.bootstrapped:
+            return ChatCursor(bootstrapped=True), 0
+        return cursor, 0
+
+    last_seen = ordered[-1]
+    candidates = _collect_new_user_messages(
+        ordered=ordered,
+        cursor=cursor,
+        watching_since=watching_since,
+    )
+
+    # Primera vez: marcar historial previo, pero sí responder si ya hay mensaje nuevo.
+    if not cursor.bootstrapped:
+        if candidates:
+            logger.info(
+                "Bootstrap chat=%s con %s mensaje(s) nuevo(s) desde vigilancia",
+                chat_id[:24],
+                len(candidates),
+            )
+            replied = await _dispatch_latest_candidate(
+                chat_id=chat_id,
+                candidates=candidates,
+                router=router,
+                support_object_id=support_object_id,
+            )
+            return _cursor_from_message(last_seen), replied
+
+        logger.info(
+            "Bootstrap chat=%s (%s mensajes vistos, sin responder historial)",
+            chat_id[:24],
+            len(ordered),
+        )
+        return _cursor_from_message(last_seen), 0
+
     bootstrap = legacy_bootstrap and not cursor.bootstrapped
-
-    if bootstrap and not ordered:
-        return (
-            ChatCursor(
-                last_message_id="",
-                last_created=cursor.last_created,
-                bootstrapped=True,
-            ),
-            0,
+    replied = 0
+    if candidates and not bootstrap:
+        replied = await _dispatch_latest_candidate(
+            chat_id=chat_id,
+            candidates=candidates,
+            router=router,
+            support_object_id=support_object_id,
         )
 
-    for raw in ordered:
-        msg_id = str(raw.get("id") or "")
-        created = raw.get("createdDateTime")
-        if not msg_id:
-            continue
-
-        if not is_user_chat_message(raw):
-            continue
-
-        if watching_since and not is_after_watching_since(created, watching_since):
-            continue
-
-        if not is_newer_than_cursor(message_id=msg_id, created=created, cursor=cursor):
-            continue
-
-        incoming = graph_message_to_incoming(raw, chat_id=chat_id)
-
-        if bootstrap:
-            logger.info(
-                "Bootstrap chat=%s mensaje=%s (sin responder)",
-                chat_id[:24],
-                msg_id,
-            )
-        elif support_object_id and incoming.from_id == support_object_id:
-            logger.info(
-                "Chat %s | mensaje %s de soporte (ignorado)",
-                chat_id[:24],
-                msg_id,
-            )
-        else:
-            try:
-                result = await router.dispatch(incoming)
-                logger.info(
-                    "Chat %s | mensaje %s de %s → handled=%s (%s)",
-                    chat_id[:24],
-                    msg_id,
-                    incoming.from_name or incoming.from_id,
-                    result.handled,
-                    result.detail,
-                )
-                if result.handled:
-                    replied += 1
-            except Exception:
-                logger.exception(
-                    "Error respondiendo en chat %s al mensaje %s",
-                    chat_id[:24],
-                    msg_id,
-                )
-
-        cursor = ChatCursor(
-            last_message_id=msg_id,
-            last_created=str(created or ""),
-            bootstrapped=True,
-        )
-
-    if ordered and not cursor.bootstrapped:
-        # Marcar chat visto sin mensajes nuevos (evita re-leer cada ciclo)
-        last = ordered[-1]
-        cursor = ChatCursor(
-            last_message_id=str(last.get("id") or ""),
-            last_created=str(last.get("createdDateTime") or ""),
-            bootstrapped=True,
-        )
-
-    return cursor, replied
+    return _cursor_from_message(last_seen), replied
 
 
 async def process_support_dms(settings: Settings, graph: GraphTeamsClient) -> int:
@@ -184,20 +245,43 @@ async def process_support_dms(settings: Settings, graph: GraphTeamsClient) -> in
     chats = await graph.list_support_one_on_one_chats(
         max_pages=settings.max_chat_pages,
     )
-    chats = _merge_tracked_chats(chats, state)
+    chats = _merge_tracked_chats(
+        chats,
+        state,
+        watching_since=state.watching_since,
+    )
     logger.info(
-        "DMs a revisar: %s chats oneOnOne (API + vigilados, máx %s página(s))",
+        "DMs a revisar: %s chats oneOnOne (API + recientes vigilados, máx %s página(s))",
         len(chats),
         settings.max_chat_pages,
     )
 
+    sorted_chats = sort_chats_by_recent(chats)
+    always_check_ids = {
+        str(chat.get("id") or "")
+        for chat in sorted_chats[: max(10, settings.messages_per_chat)]
+        if chat.get("id")
+    }
+
     replied_total = 0
+    skipped_inactive = 0
+    checked = 0
     for chat in chats:
         chat_id = str(chat.get("id") or "")
         if not chat_id:
             continue
 
         cursor = state.chats.get(chat_id) or ChatCursor()
+        if (
+            cursor.bootstrapped
+            and state.watching_since
+            and chat_id not in always_check_ids
+            and not is_chat_active_since(chat, state.watching_since)
+        ):
+            skipped_inactive += 1
+            continue
+
+        checked += 1
 
         try:
             messages = await graph.list_chat_messages(
@@ -219,6 +303,13 @@ async def process_support_dms(settings: Settings, graph: GraphTeamsClient) -> in
         )
         state.chats[chat_id] = new_cursor
         replied_total += replied
+
+    logger.info(
+        "Chats consultados: %s | inactivos omitidos: %s | siempre revisados (top recientes): %s",
+        checked,
+        skipped_inactive,
+        len(always_check_ids),
+    )
 
     if replied_total:
         logger.info("Respuestas automáticas enviadas en este ciclo: %s", replied_total)
