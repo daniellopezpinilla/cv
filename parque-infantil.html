@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Parque infantil — espacio verde</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --soil: #24352c;
+      --leaf: #3d7a52;
+      --leaf-deep: #1f4d35;
+      --sky: #d7e8df;
+      --mist: #eef6f1;
+      --ink: #18241d;
+      --muted: #4a5c52;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Nunito", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(ellipse 90% 55% at 0% 0%, rgba(61, 122, 82, 0.18), transparent 55%),
+        radial-gradient(ellipse 70% 45% at 100% 10%, rgba(120, 170, 190, 0.22), transparent 50%),
+        linear-gradient(180deg, var(--sky) 0%, var(--mist) 45%, #e4f0ea 100%);
+      line-height: 1.55;
+    }
+
+    a { color: var(--leaf-deep); }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 1.5rem;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .topbar a {
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .hero {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 1.5rem 1.5rem 3rem;
+      display: grid;
+      gap: 2rem;
+      align-items: end;
+    }
+
+    @media (min-width: 860px) {
+      .hero {
+        grid-template-columns: 0.9fr 1.1fr;
+        min-height: 78vh;
+        padding-top: 2rem;
+      }
+    }
+
+    .brand {
+      font-family: "Libre Baskerville", serif;
+      font-size: clamp(2.4rem, 5.5vw, 4rem);
+      font-weight: 700;
+      line-height: 1.05;
+      letter-spacing: -0.02em;
+      color: var(--leaf-deep);
+      margin: 0 0 1rem;
+    }
+
+    .hero h1 {
+      font-family: "Nunito", sans-serif;
+      font-size: clamp(1.25rem, 2.4vw, 1.7rem);
+      font-weight: 700;
+      margin: 0 0 0.75rem;
+      color: var(--soil);
+    }
+
+    .hero p {
+      margin: 0 0 1.5rem;
+      color: var(--muted);
+      max-width: 32ch;
+      font-size: 1.05rem;
+    }
+
+    .cta {
+      display: inline-flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .cta a {
+      display: inline-block;
+      padding: 0.75rem 1.25rem;
+      border-radius: 4px;
+      text-decoration: none;
+      font-weight: 600;
+      transition: transform 0.25s ease, background 0.25s ease;
+    }
+
+    .cta a:hover { transform: translateY(-2px); }
+
+    .cta .primary {
+      background: var(--leaf);
+      color: #f7faf7;
+    }
+
+    .cta .secondary {
+      background: transparent;
+      color: var(--soil);
+      border: 1.5px solid rgba(58, 47, 36, 0.35);
+    }
+
+    .hero-visual {
+      position: relative;
+      overflow: hidden;
+      border-radius: 2px;
+      box-shadow: 0 24px 60px rgba(28, 24, 20, 0.18);
+      animation: rise 0.9s ease both;
+    }
+
+    .hero-visual img {
+      display: block;
+      width: 100%;
+      height: auto;
+      vertical-align: middle;
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(18px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .copy-in {
+      animation: rise 0.8s ease 0.15s both;
+    }
+
+    section {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 3rem 1.5rem;
+    }
+
+    section h2 {
+      font-family: "Libre Baskerville", serif;
+      font-size: clamp(1.5rem, 3vw, 2rem);
+      margin: 0 0 0.5rem;
+      color: var(--leaf-deep);
+    }
+
+    section > p.lead {
+      margin: 0 0 2rem;
+      color: var(--muted);
+      max-width: 52ch;
+    }
+
+    .compare {
+      display: grid;
+      gap: 1.25rem;
+    }
+
+    @media (min-width: 760px) {
+      .compare { grid-template-columns: 1fr 1fr; }
+    }
+
+    figure {
+      margin: 0;
+    }
+
+    figure img {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 2px;
+      box-shadow: 0 12px 32px rgba(28, 24, 20, 0.12);
+    }
+
+    figcaption {
+      margin-top: 0.65rem;
+      font-size: 0.92rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .equipo {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 1rem;
+    }
+
+    @media (min-width: 700px) {
+      .equipo { grid-template-columns: 1fr 1fr; }
+    }
+
+    .equipo li {
+      padding: 1rem 0;
+      border-top: 1px solid rgba(58, 47, 36, 0.15);
+    }
+
+    .equipo strong {
+      display: block;
+      font-family: "Libre Baskerville", serif;
+      font-size: 1.1rem;
+      color: var(--soil);
+      margin-bottom: 0.25rem;
+    }
+
+    .equipo span {
+      color: var(--muted);
+      font-size: 0.98rem;
+    }
+
+    .notas {
+      background: linear-gradient(135deg, rgba(61, 122, 82, 0.12), rgba(120, 170, 190, 0.14));
+      border-radius: 2px;
+      padding: 2rem 1.5rem;
+    }
+
+    .notas ul {
+      margin: 1rem 0 0;
+      padding-left: 1.15rem;
+      color: var(--muted);
+    }
+
+    .notas li { margin-bottom: 0.5rem; }
+
+    footer {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 3rem;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <a href="index.html">← Daniel Lopez</a>
+    <a href="Contacto.html">Contacto</a>
+  </div>
+
+  <header class="hero">
+    <div class="copy-in">
+      <p class="brand">Parque infantil</p>
+      <h1>Un corredor de juego para el espacio verde</h1>
+      <p>Propuesta lineal para el franja estrecha entre el edificio de ladrillo y la reja: piso de seguridad, madera natural y equipo a escala del sitio.</p>
+      <div class="cta">
+        <a class="primary" href="#propuesta">Ver propuesta</a>
+        <a class="secondary" href="#antes-despues">Antes y después</a>
+      </div>
+    </div>
+    <div class="hero-visual">
+      <img src="Images/parque-infantil-propuesta.jpg" alt="Propuesta de parque infantil en el espacio verde urbano">
+    </div>
+  </header>
+
+  <section id="antes-despues">
+    <h2>Antes y después</h2>
+    <p class="lead">El mismo pasillo verde, transformado en un parque compacto con superficie de caucho y juegos en línea.</p>
+    <div class="compare">
+      <figure>
+        <img src="Images/espacio-verde-antes.jpg" alt="Espacio verde actual, sin parque">
+        <figcaption>Hoy: césped, dos coníferas y el ducto en primer plano</figcaption>
+      </figure>
+      <figure>
+        <img src="Images/parque-infantil-propuesta.jpg" alt="Espacio verde con parque infantil propuesto">
+        <figcaption>Propuesta: piso de seguridad y circuito de juego lineal</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="propuesta">
+    <h2>Equipamiento</h2>
+    <p class="lead">Disposición en fila para un terreno de unos 4–5 m de ancho y 12–15 m de largo.</p>
+    <ul class="equipo">
+      <li>
+        <strong>Casita con tobogán</strong>
+        <span>Al fondo, con tobogán naranja corto para niños pequeños.</span>
+      </li>
+      <li>
+        <strong>Columpios</strong>
+        <span>Estructura de madera con dos asientos, en el tramo medio.</span>
+      </li>
+      <li>
+        <strong>Troncos y equilibrio</strong>
+        <span>Troncos a diferentes alturas y viga baja para gatear y equilibrarse.</span>
+      </li>
+      <li>
+        <strong>Balancín</strong>
+        <span>Juego de resorte en primer plano, lejos de la ventana y de la calle.</span>
+      </li>
+    </ul>
+  </section>
+
+  <section>
+    <div class="notas">
+      <h2>Notas de diseño</h2>
+      <ul>
+        <li>Piso de caucho continuo en verde, marrón y arena para amortiguar caídas.</li>
+        <li>Franja de piedras y arbustos junto al edificio para proteger ventanas y drenaje.</li>
+        <li>Equipo bajo y lineal: cabe en el corredor sin invadir la reja ni la fachada.</li>
+        <li>Coníferas existentes reubicadas o integradas en el borde ajardinado.</li>
+        <li>El ducto negro del primer plano se redefine o se protege fuera de la zona de juego.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    Propuesta visual para el espacio verde · <a href="index.html">Volver al sitio</a>
+  </footer>
+</body>
+</html>
